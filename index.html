@@ -1,208 +1,192 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Single-Phone Altimeter</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phyphox Altimeter (15s chunks)</title>
 <style>
-  :root { --fg:#0f172a; --muted:#64748b; --bg:#f8fafc; --card:#ffffff; --accent:#2563eb; }
-  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f8fafc;color:#0f172a}
   .wrap{max-width:780px;margin:24px auto;padding:16px}
-  .card{background:var(--card);border-radius:16px;padding:20px;box-shadow:0 8px 24px rgba(15,23,42,.06)}
-  h1{font-size:1.4rem;margin:.25rem 0 1rem}
+  .card{background:#fff;border-radius:14px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.06)}
+  label{font-size:.9rem;color:#64748b}
+  input,button{font:inherit;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px}
+  button{background:#2563eb;color:#fff;border:none;cursor:pointer}
+  button.ghost{background:#fff;color:#2563eb;border:1px solid #2563eb}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-  label{font-size:.9rem;color:var(--muted)}
-  input,select,button,textarea{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;font:inherit}
-  button{background:var(--accent);color:#fff;border:none;cursor:pointer}
-  button.ghost{background:#fff;color:var(--accent);border:1px solid var(--accent)}
-  .stat{display:flex;align-items:baseline;gap:10px;padding:12px 0;border-bottom:1px dashed #e2e8f0}
+  .stat{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #e2e8f0}
   .stat:last-child{border-bottom:none}
-  .big{font-weight:700;font-size:1.8rem}
-  .ok{color:#059669}.warn{color:#b45309}.err{color:#dc2626}
-  .muted{color:var(--muted)}
-  .pill{display:inline-block;padding:3px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:.8rem}
-  .grid{display:grid;gap:12px}
-  .hidden{display:none}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:.8rem}
+  .muted{color:#64748b}
 </style>
-</head>
-<body>
 <div class="wrap">
   <div class="card">
-    <h1>Single-Phone Altimeter</h1>
-    <div class="grid">
-      <div class="row">
-        <div>
-          <label>Sensor status</label>
-          <div id="status" class="pill">checking…</div>
-        </div>
-        <div>
-          <label>Sampling</label>
-          <select id="freq">
-            <option value="10">10 Hz</option>
-            <option value="5">5 Hz</option>
-            <option value="1">1 Hz</option>
-          </select>
-        </div>
+    <h1>Phyphox Altimeter</h1>
+    <div class="row">
+      <div>
+        <label>Phyphox base URL</label>
+        <input id="base" placeholder="http://192.0.0.4:8080" />
       </div>
-
-      <div class="row3">
-        <div><label>Averaging window (s)</label><input id="avgSec" type="number" min="1" max="120" step="1" value="30"></div>
-        <div><label>Computation</label>
-          <select id="mode">
-            <option value="linear">Linear (11.8 Pa/m)</option>
-            <option value="hypsometric">Hypsometric (needs temp)</option>
-          </select>
-        </div>
-        <div id="tempBox"><label>Room temp (°C)</label><input id="tempC" type="number" step="0.1" value="22"></div>
+      <div>
+        <label>Chunk period (s)</label>
+        <input id="period" type="number" min="5" step="1" value="15" />
       </div>
-
-      <div class="row">
-        <button id="start">Start sensor</button>
-        <button id="stop" class="ghost">Stop</button>
-      </div>
-
-      <div class="row">
-        <button id="setBaseline">Set baseline (average)</button>
-        <button id="clearBaseline" class="ghost">Clear baseline</button>
-      </div>
-
-      <div class="stat"><span class="muted">Live pressure:</span> <span class="big" id="pLive">—</span> <span class="muted">Pa (EMA)</span></div>
-      <div class="stat"><span class="muted">Baseline pressure:</span> <span class="big" id="p0">—</span> <span class="muted">Pa (avg over window)</span></div>
-      <div class="stat"><span class="muted">Current window avg:</span> <span class="big" id="pAvg">—</span> <span class="muted">Pa</span></div>
-      <div class="stat"><span class="muted">ΔP (P0 − P):</span> <span class="big" id="dP">—</span> <span class="muted">Pa</span></div>
-      <div class="stat"><span class="muted">Δh:</span> <span class="big" id="dh">—</span> <span class="muted">m</span></div>
-
-      <details>
-        <summary>Fallback / simulation (if no barometer)</summary>
-        <div class="row">
-          <div><label>Manual pressure (Pa)</label><input id="manualP" type="number" step="0.1" value="101325"></div>
-          <div><label>&nbsp;</label><button id="useManual" class="ghost">Use manual pressure</button></div>
-        </div>
-        <p class="muted">If your browser doesn’t expose a Barometer, you can still test calculations by typing pressure values.</p>
-      </details>
-
-      <p class="muted">Note: Sensor APIs require HTTPS and may be gated by permissions/flags on some browsers. If unavailable, use manual mode. :contentReference[oaicite:1]{index=1}</p>
     </div>
+    <div class="row" style="margin-top:8px">
+      <button id="start">Start</button>
+      <button id="stop" class="ghost">Stop</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="zero" class="ghost">Zero: OFF</button>
+      <button id="pick" class="ghost">Choose log CSV (optional)</button>
+    </div>
+    <p class="muted" id="status">Idle.</p>
+
+    <div class="stat"><span>Avg pressure (Pa, last chunk)</span><strong id="pavg">—</strong></div>
+    <div class="stat"><span>Δh (m, baseline/zero applied)</span><strong id="dh">—</strong></div>
+    <div class="stat"><span>Baseline P₀ (Pa)</span><strong id="p0">—</strong></div>
+    <div class="stat"><span>Last update</span><strong id="ts">—</strong></div>
+
+    <details style="margin-top:12px">
+      <summary>Download session log (if no file chosen)</summary>
+      <a id="download" download="altimeter_log.csv">Download CSV</a>
+    </details>
   </div>
 </div>
 <script>
 (() => {
-  const UI = (id) => document.getElementById(id);
-  const status = UI('status'), pLive = UI('pLive'), pAvg = UI('pAvg'), p0 = UI('p0'), dP = UI('dP'), dh = UI('dh');
-  const avgSecEl = UI('avgSec'), tempCEl = UI('tempC'), modeEl = UI('mode'), freqEl = UI('freq');
-  const startBtn = UI('start'), stopBtn = UI('stop'), setBaselineBtn = UI('setBaseline'), clearBaselineBtn = UI('clearBaseline');
-  const manualP = UI('manualP'), useManual = UI('useManual'), tempBox = UI('tempBox');
+  const UI = id => document.getElementById(id);
+  const baseEl = UI('base'), periodEl = UI('period');
+  const startBtn = UI('start'), stopBtn = UI('stop'), zeroBtn = UI('zero'), pickBtn = UI('pick');
+  const pavgEl = UI('pavg'), dhEl = UI('dh'), p0El = UI('p0'), tsEl = UI('ts'), statusEl = UI('status'), dl = UI('download');
 
-  // hypsometric constants
-  const R = 287.05, g = 9.80665;
+  let timer = null;
+  let baselinePa = null;       // fixed baseline (set on first successful chunk, unless zero toggled later)
+  let zeroMode = false;        // when ON, baseline is set to current chunk’s avg (relative mode)
+  let fileHandle = null;       // chosen CSV file handle (File System Access API)
+  let logBlob = new Blob(["timestamp_iso,avg_pressure_pa,delta_h_m,zero_active\n"], {type:"text/csv"});
 
-  let sensor = null;
-  let ema = null;       // exponential moving average for live stability
-  let windowBuf = [];   // simple ring buffer for window average
-  let pBaseline = null;
-  let lastTick = 0;
+  function setStatus(s){ statusEl.textContent = s; }
 
-  function setStatus(text, cls = '') {
-    status.textContent = text;
-    status.className = 'pill ' + cls;
-  }
-
-  function windowAvg() {
-    if (!windowBuf.length) return null;
-    return windowBuf.reduce((a,b)=>a+b,0) / windowBuf.length;
-  }
-
-  function updateComputations(pNow) {
-    // Window buffer maintenance (target ~10 samples/sec * avgSec)
-    const targetSamples = Math.max(1, Math.round(Number(freqEl.value) * Number(avgSecEl.value)));
-    windowBuf.push(pNow);
-    while (windowBuf.length > targetSamples) windowBuf.shift();
-
-    pLive.textContent = pNow.toFixed(2);
-    const pW = windowAvg();
-    pAvg.textContent = pW ? pW.toFixed(2) : '—';
-
-    if (pBaseline != null && pW != null) {
-      const dPa = (pBaseline - pW);
-      dP.textContent = dPa.toFixed(2);
-      let deltaH;
-      if (modeEl.value === 'linear') {
-        deltaH = dPa / 11.8; // Pa / (Pa/m) = m
-      } else {
-        const T = Number(tempCEl.value) + 273.15; // K
-        deltaH = (R * T / g) * Math.log(pBaseline / pW);
+  // Helper: append to user-chosen CSV, or to in-memory blob fallback
+  async function appendLog(line) {
+    if (fileHandle) {
+      try {
+        const writable = await fileHandle.createWritable({keepExistingData: true});
+        const file = await fileHandle.getFile();
+        await writable.write({type:"write", position:file.size, data: line});
+        await writable.close();
+      } catch (e) {
+        console.error(e);
+        setStatus("Failed to write file; using in-memory log instead.");
+        fileHandle = null;
+        logBlob = new Blob([await logBlob.text(), line], {type:"text/csv"});
       }
-      dh.textContent = deltaH.toFixed(3);
     } else {
-      dP.textContent = '—';
-      dh.textContent = '—';
+      logBlob = new Blob([logBlob, line], {type:"text/csv"});
+      dl.href = URL.createObjectURL(logBlob);
     }
   }
 
-  // Fallback: manual pressure feed
-  useManual.addEventListener('click', () => {
-    const p = Number(manualP.value);
-    if (!Number.isFinite(p) || p <= 0) return alert('Enter a valid positive pressure in Pa');
-    tick(p);
-  });
+  // Parse phyphox CSV export (format=2): columns start with a header line and semicolon-separated metadata; use last numeric column for pressure hPa if present
+  function parsePhyphoxCSV(text) {
+    // Skip metadata lines that start with '#'
+    const lines = text.trim().split(/\r?\n/).filter(l => l && !l.startsWith('#'));
+    if (lines.length < 2) return {cols:[], rows:[]};
+    const headers = lines[0].split('\t');  // CSV export uses tabs in many builds; handle commas too
+    const delim = (lines[0].includes('\t') ? '\t' : ',');
+    const rows = lines.slice(1).map(l => l.split(delim).map(x => x.trim())).filter(r => r.length === headers.length);
+    return {cols: headers, rows};
+  }
 
-  // Baseline controls
-  setBaselineBtn.addEventListener('click', () => {
-    const pW = windowAvg();
-    if (pW == null) return alert('Need a few seconds of data before baselining.');
-    pBaseline = pW;
-    p0.textContent = pBaseline.toFixed(2);
-  });
-  clearBaselineBtn.addEventListener('click', () => { pBaseline = null; p0.textContent = '—'; });
-
-  // Sensor lifecycle
-  async function start() {
-    stop();
-    setStatus('starting…');
-    const cls = window.Barometer || window.AmbientPressureSensor || window.PressureSensor; // try known names
-    if (!cls) {
-      setStatus('no web barometer (use manual mode)', 'warn'); 
-      return;
+  // Compute average of pressure column in Pa
+  function averagePressurePa(table) {
+    // Try to locate a "pressure" column (hPa) or a "Pressure (hPa)" name
+    const idx = table.cols.findIndex(h => /pressure/i.test(h));
+    if (idx < 0) return null;
+    let sum = 0, n = 0;
+    for (const r of table.rows) {
+      const v = parseFloat(r[idx]);
+      if (Number.isFinite(v)) { sum += v; n++; }
     }
+    if (!n) return null;
+    const avg_hPa = sum / n;
+    return avg_hPa * 100.0; // hPa -> Pa
+  }
+
+  // Fetch one chunk: export CSV, compute avg, (optionally) set baseline/zero, compute Δh, then clear buffer.
+  async function cycleOnce() {
+    const base = baseEl.value.trim();
+    if (!base) { setStatus("Enter phyphox base URL."); return; }
     try {
-      sensor = new cls({ frequency: Number(freqEl.value) });
-      sensor.addEventListener('reading', () => {
-        const p = sensor.pressure ?? sensor.value ?? sensor.x; // best-effort
-        if (typeof p === 'number' && Number.isFinite(p)) tick(p);
-      });
-      sensor.addEventListener('error', e => setStatus(`sensor error: ${e.error?.name || e.message}`, 'err'));
-      sensor.start();
-      setStatus('running', 'ok');
+      // 1) CSV snapshot
+      const r = await fetch(`${base}/export?format=2`, {cache:"no-store"});
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const csvText = await r.text();
+      const table = parsePhyphoxCSV(csvText);
+      const pAvgPa = averagePressurePa(table);
+      if (pAvgPa == null) { setStatus("No pressure data yet…"); return; }
+
+      // 2) (First time) initialize baseline if not set, or refresh when zero mode is ON
+      if (baselinePa == null || zeroMode) baselinePa = pAvgPa;
+
+      // 3) Compute Δh (linear 11.8 Pa/m)
+      const dP = (baselinePa - pAvgPa);
+      const dh = dP / 11.8;
+
+      // 4) Update UI
+      const now = new Date();
+      pavgEl.textContent = pAvgPa.toFixed(2);
+      dhEl.textContent = dh.toFixed(3);
+      p0El.textContent = baselinePa.toFixed(2);
+      tsEl.textContent = now.toISOString();
+
+      // 5) Append to log CSV: timestamp, avg_pressure_pa, delta_h_m, zero_active
+      await appendLog(`${now.toISOString()},${pAvgPa.toFixed(2)},${dh.toFixed(3)},${zeroMode}\n`);
+
+      // 6) Clear phyphox buffers so the next export is a fresh 15s window
+      await fetch(`${base}/control?cmd=clear`).catch(()=>{});
+      setStatus("OK");
     } catch (e) {
-      setStatus(`failed to start: ${e.name || e.message}`, 'err');
+      console.error(e);
+      setStatus("Fetch failed. Check phyphox URL / Wi-Fi / Remote access.");
     }
   }
-  function stop() {
-    if (sensor) { try { sensor.stop(); } catch {} sensor = null; }
-    ema = null; windowBuf = [];
-    setStatus('stopped', 'warn');
-  }
 
-  // smoothing
-  function tick(pRaw) {
-    const now = performance.now();
-    const dt = (now - lastTick) / 1000;
-    lastTick = now;
-    const alpha = 0.2; // EMA smoothing factor
-    ema = (ema == null) ? pRaw : (alpha * pRaw + (1 - alpha) * ema);
-    updateComputations(ema);
-  }
+  startBtn.addEventListener('click', () => {
+    if (timer) return;
+    const period = Math.max(5, parseInt(periodEl.value)||15) * 1000;
+    setStatus("Running…");
+    cycleOnce(); // run immediately
+    timer = setInterval(cycleOnce, period);
+  });
 
-  startBtn.addEventListener('click', start);
-  stopBtn.addEventListener('click', stop);
-  modeEl.addEventListener('change', ()=> tempBox.style.opacity = (modeEl.value==='hypsometric') ? 1 : .5);
-  tempBox.style.opacity = .5;
+  stopBtn.addEventListener('click', () => {
+    if (timer) { clearInterval(timer); timer = null; setStatus("Stopped."); }
+  });
 
-  // initial status message
-  if (window.isSecureContext) setStatus('secure context ✔︎', 'ok');
-  else setStatus('not HTTPS (sensors will be blocked)', 'err');
+  zeroBtn.addEventListener('click', () => {
+    zeroMode = !zeroMode;
+    zeroBtn.textContent = `Zero: ${zeroMode ? 'ON' : 'OFF'}`;
+    // When toggled ON, next cycle sets baseline to current avg.
+  });
+
+  pickBtn.addEventListener('click', async () => {
+    try {
+      // Ask user once for a CSV file to append to
+      if (!('showSaveFilePicker' in window)) {
+        alert("Your browser doesn’t support the File System Access API. Use the Download link instead.");
+        return;
+      }
+      const handle = await window.showSaveFilePicker({
+        suggestedName: `altimeter_log_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,
+        types: [{description:"CSV", accept:{'text/csv':['.csv']}}]
+      });
+      fileHandle = handle;
+      // Initialize header
+      await appendLog(""); // no-op to ensure handle works
+      await appendLog(""); // keepExistingData:true ensures we don’t clobber existing content
+    } catch (e) {
+      console.log(e);
+    }
+  });
+
 })();
 </script>
-</body>
-</html>
