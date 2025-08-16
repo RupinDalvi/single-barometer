@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Single-Phone Altimeter</title>
+<style>
+  :root { --fg:#0f172a; --muted:#64748b; --bg:#f8fafc; --card:#ffffff; --accent:#2563eb; }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:780px;margin:24px auto;padding:16px}
+  .card{background:var(--card);border-radius:16px;padding:20px;box-shadow:0 8px 24px rgba(15,23,42,.06)}
+  h1{font-size:1.4rem;margin:.25rem 0 1rem}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  label{font-size:.9rem;color:var(--muted)}
+  input,select,button,textarea{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;font:inherit}
+  button{background:var(--accent);color:#fff;border:none;cursor:pointer}
+  button.ghost{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+  .stat{display:flex;align-items:baseline;gap:10px;padding:12px 0;border-bottom:1px dashed #e2e8f0}
+  .stat:last-child{border-bottom:none}
+  .big{font-weight:700;font-size:1.8rem}
+  .ok{color:#059669}.warn{color:#b45309}.err{color:#dc2626}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:.8rem}
+  .grid{display:grid;gap:12px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Single-Phone Altimeter</h1>
+    <div class="grid">
+      <div class="row">
+        <div>
+          <label>Sensor status</label>
+          <div id="status" class="pill">checking…</div>
+        </div>
+        <div>
+          <label>Sampling</label>
+          <select id="freq">
+            <option value="10">10 Hz</option>
+            <option value="5">5 Hz</option>
+            <option value="1">1 Hz</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row3">
+        <div><label>Averaging window (s)</label><input id="avgSec" type="number" min="1" max="120" step="1" value="30"></div>
+        <div><label>Computation</label>
+          <select id="mode">
+            <option value="linear">Linear (11.8 Pa/m)</option>
+            <option value="hypsometric">Hypsometric (needs temp)</option>
+          </select>
+        </div>
+        <div id="tempBox"><label>Room temp (°C)</label><input id="tempC" type="number" step="0.1" value="22"></div>
+      </div>
+
+      <div class="row">
+        <button id="start">Start sensor</button>
+        <button id="stop" class="ghost">Stop</button>
+      </div>
+
+      <div class="row">
+        <button id="setBaseline">Set baseline (average)</button>
+        <button id="clearBaseline" class="ghost">Clear baseline</button>
+      </div>
+
+      <div class="stat"><span class="muted">Live pressure:</span> <span class="big" id="pLive">—</span> <span class="muted">Pa (EMA)</span></div>
+      <div class="stat"><span class="muted">Baseline pressure:</span> <span class="big" id="p0">—</span> <span class="muted">Pa (avg over window)</span></div>
+      <div class="stat"><span class="muted">Current window avg:</span> <span class="big" id="pAvg">—</span> <span class="muted">Pa</span></div>
+      <div class="stat"><span class="muted">ΔP (P0 − P):</span> <span class="big" id="dP">—</span> <span class="muted">Pa</span></div>
+      <div class="stat"><span class="muted">Δh:</span> <span class="big" id="dh">—</span> <span class="muted">m</span></div>
+
+      <details>
+        <summary>Fallback / simulation (if no barometer)</summary>
+        <div class="row">
+          <div><label>Manual pressure (Pa)</label><input id="manualP" type="number" step="0.1" value="101325"></div>
+          <div><label>&nbsp;</label><button id="useManual" class="ghost">Use manual pressure</button></div>
+        </div>
+        <p class="muted">If your browser doesn’t expose a Barometer, you can still test calculations by typing pressure values.</p>
+      </details>
+
+      <p class="muted">Note: Sensor APIs require HTTPS and may be gated by permissions/flags on some browsers. If unavailable, use manual mode. :contentReference[oaicite:1]{index=1}</p>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const UI = (id) => document.getElementById(id);
+  const status = UI('status'), pLive = UI('pLive'), pAvg = UI('pAvg'), p0 = UI('p0'), dP = UI('dP'), dh = UI('dh');
+  const avgSecEl = UI('avgSec'), tempCEl = UI('tempC'), modeEl = UI('mode'), freqEl = UI('freq');
+  const startBtn = UI('start'), stopBtn = UI('stop'), setBaselineBtn = UI('setBaseline'), clearBaselineBtn = UI('clearBaseline');
+  const manualP = UI('manualP'), useManual = UI('useManual'), tempBox = UI('tempBox');
+
+  // hypsometric constants
+  const R = 287.05, g = 9.80665;
+
+  let sensor = null;
+  let ema = null;       // exponential moving average for live stability
+  let windowBuf = [];   // simple ring buffer for window average
+  let pBaseline = null;
+  let lastTick = 0;
+
+  function setStatus(text, cls = '') {
+    status.textContent = text;
+    status.className = 'pill ' + cls;
+  }
+
+  function windowAvg() {
+    if (!windowBuf.length) return null;
+    return windowBuf.reduce((a,b)=>a+b,0) / windowBuf.length;
+  }
+
+  function updateComputations(pNow) {
+    // Window buffer maintenance (target ~10 samples/sec * avgSec)
+    const targetSamples = Math.max(1, Math.round(Number(freqEl.value) * Number(avgSecEl.value)));
+    windowBuf.push(pNow);
+    while (windowBuf.length > targetSamples) windowBuf.shift();
+
+    pLive.textContent = pNow.toFixed(2);
+    const pW = windowAvg();
+    pAvg.textContent = pW ? pW.toFixed(2) : '—';
+
+    if (pBaseline != null && pW != null) {
+      const dPa = (pBaseline - pW);
+      dP.textContent = dPa.toFixed(2);
+      let deltaH;
+      if (modeEl.value === 'linear') {
+        deltaH = dPa / 11.8; // Pa / (Pa/m) = m
+      } else {
+        const T = Number(tempCEl.value) + 273.15; // K
+        deltaH = (R * T / g) * Math.log(pBaseline / pW);
+      }
+      dh.textContent = deltaH.toFixed(3);
+    } else {
+      dP.textContent = '—';
+      dh.textContent = '—';
+    }
+  }
+
+  // Fallback: manual pressure feed
+  useManual.addEventListener('click', () => {
+    const p = Number(manualP.value);
+    if (!Number.isFinite(p) || p <= 0) return alert('Enter a valid positive pressure in Pa');
+    tick(p);
+  });
+
+  // Baseline controls
+  setBaselineBtn.addEventListener('click', () => {
+    const pW = windowAvg();
+    if (pW == null) return alert('Need a few seconds of data before baselining.');
+    pBaseline = pW;
+    p0.textContent = pBaseline.toFixed(2);
+  });
+  clearBaselineBtn.addEventListener('click', () => { pBaseline = null; p0.textContent = '—'; });
+
+  // Sensor lifecycle
+  async function start() {
+    stop();
+    setStatus('starting…');
+    const cls = window.Barometer || window.AmbientPressureSensor || window.PressureSensor; // try known names
+    if (!cls) {
+      setStatus('no web barometer (use manual mode)', 'warn'); 
+      return;
+    }
+    try {
+      sensor = new cls({ frequency: Number(freqEl.value) });
+      sensor.addEventListener('reading', () => {
+        const p = sensor.pressure ?? sensor.value ?? sensor.x; // best-effort
+        if (typeof p === 'number' && Number.isFinite(p)) tick(p);
+      });
+      sensor.addEventListener('error', e => setStatus(`sensor error: ${e.error?.name || e.message}`, 'err'));
+      sensor.start();
+      setStatus('running', 'ok');
+    } catch (e) {
+      setStatus(`failed to start: ${e.name || e.message}`, 'err');
+    }
+  }
+  function stop() {
+    if (sensor) { try { sensor.stop(); } catch {} sensor = null; }
+    ema = null; windowBuf = [];
+    setStatus('stopped', 'warn');
+  }
+
+  // smoothing
+  function tick(pRaw) {
+    const now = performance.now();
+    const dt = (now - lastTick) / 1000;
+    lastTick = now;
+    const alpha = 0.2; // EMA smoothing factor
+    ema = (ema == null) ? pRaw : (alpha * pRaw + (1 - alpha) * ema);
+    updateComputations(ema);
+  }
+
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+  modeEl.addEventListener('change', ()=> tempBox.style.opacity = (modeEl.value==='hypsometric') ? 1 : .5);
+  tempBox.style.opacity = .5;
+
+  // initial status message
+  if (window.isSecureContext) setStatus('secure context ✔︎', 'ok');
+  else setStatus('not HTTPS (sensors will be blocked)', 'err');
+})();
+</script>
+</body>
+</html>
