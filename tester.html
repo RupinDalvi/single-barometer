@@ -1,0 +1,13 @@
+<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><pre id=o>testing…</pre>
+<script>
+(async () => {
+  const url = "http://10.0.0.118:8080/get?time=0&pressure=0|time";
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    document.getElementById('o').textContent =
+      r.ok ? JSON.stringify(await r.json()).slice(0,200)+"…" : `HTTP ${r.status}`;
+  } catch (e) {
+    document.getElementById('o').textContent = "Fetch error: " + (e.message || e);
+  }
+})();
+</script>
